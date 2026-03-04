@@ -3,10 +3,22 @@
 typedef struct {
     double token_reserves_A;
     double token_reserves_B;
+    double total_LP_shares;
 
 }LiquidityPool;
 
 typedef enum {TOKEN_A,TOKEN_B} TokenType;
+
+typedef struct {
+    double wallet_A;
+    double wallet_B;
+    double lp_shares;
+}User;
+
+typedef struct {
+    double amount_A;
+    double amount_B;
+}Withdrawal;
 
 // k is invariant
 double calculate_k(LiquidityPool pool) {
@@ -54,24 +66,139 @@ void swap(LiquidityPool *pool, double amount_in, TokenType input_type) {
             amount_out, (input_type == TOKEN_A ? "B" : "A"));
 }
 
-void main(void) {
-    double initialA= 100;
-    double initialB= 100;
+//Ads liquity
+double mint(LiquidityPool *pool, double amount_A) {
+    double amount_B;
+    double new_shares;
+    // 1. Adding shares
+    // If the pool is empty, it should be initialized
+    if (pool->total_LP_shares==0) {
+        amount_B=amount_A; // 1:1 as default
+        new_shares=amount_A;
 
-    LiquidityPool pool;
-    pool.token_reserves_A = initialA;
-    pool.token_reserves_B = initialB;
-    int i;
+    }else {
+        //2. Deposit in B depends on A
+        amount_B= amount_A*(pool->token_reserves_B/pool->token_reserves_A);
+
+        //3. New shares
+        new_shares=(amount_A/pool->token_reserves_A)*pool->total_LP_shares;
+    }
+    //UPDATE the pool
+    pool->token_reserves_A+=amount_A;
+    pool->token_reserves_B+=amount_B;
+    pool->total_LP_shares+=new_shares;
+
+    printf(">>> MINT: Pool received %.2f A and %.2f B. Total Shares now: %.2f\n",
+            amount_A, amount_B, pool->total_LP_shares);
+    return new_shares;
+}
+
+Withdrawal burn(LiquidityPool *pool, double shares_to_burn) {
+
+    double fraction;
+    //1. Calculate the fraction
+    fraction=shares_to_burn/pool->total_LP_shares;
+
+    //2. Calculate the amounts to payback
+    double amount_A_fraction=fraction*pool->token_reserves_A;
+    double amount_B_fraction=fraction*pool->token_reserves_B;
+
+    //SUBSTRACT from the pool
+    pool->token_reserves_A-=amount_A_fraction;
+    pool->token_reserves_B-=amount_B_fraction;
+    pool->total_LP_shares-=shares_to_burn;
+
+    printf("<<< BURN: Destroyed %.2f shares. Returned %.2f A and %.2f B.\n",
+            shares_to_burn, amount_A_fraction, amount_B_fraction);
+    Withdrawal result={amount_A_fraction,amount_B_fraction};
+    return result;
+
+}
+
+void execute_mint(User *user, LiquidityPool *pool, double amount_A) {
+    double required_B;
+    // 1. Calculate required B based on pool ratio
+    if (pool->total_LP_shares == 0) {
+        // For the very first deposit, we assume a 1:1 ratio
+        // OR you can pass a specific amount_B as a parameter.
+        required_B = amount_A;
+    } else {
+        double ratio = pool->token_reserves_B / pool->token_reserves_A;
+        required_B = amount_A * ratio;
+    }
+
+    // 2. Pre-flight Checks (The Safety Guard)
+    if (user->wallet_A < amount_A || user->wallet_B < required_B) {
+        printf("FAILED: User has insufficient funds. (Need %.2f B, Have %.2f B)\n",
+                required_B, user->wallet_B);
+        return;
+    }
+
+    // 3. Update User Wallet (Atomic with the protocol call)
+    user->wallet_A -= amount_A;
+    user->wallet_B -= required_B;
+
+    // 4. Call the Core Protocol & capture issued shares
+    double shares_received = mint(pool, amount_A);
+    user->lp_shares += shares_received;
+
+    printf("SUCCESS: Minted %.2f shares for %s\n", shares_received, "User");
+}
+
+void execute_burn(User *user, LiquidityPool *pool, double shares) {
+    // Safety check BEFORE calling the protocol
+    if (user->lp_shares < shares) {
+        printf("FAILED: You don't own enough shares!\n");
+        return;
+    }
+
+    // Call the protocol and capture the returned tokens
+    Withdrawal received = burn(pool, shares);
+
+    // Update User Wallet with the returned amounts
+    user->wallet_A += received.amount_A;
+    user->wallet_B += received.amount_B;
+    user->lp_shares -= shares;
+
+    printf("SUCCESS: Received %.2f A and %.2f B\n", received.amount_A, received.amount_B);
+}
+
+void main(void) {
+
+    // 1. Set up the pool
+    LiquidityPool pool={0,0,0};
+
+    // 2. Set up the user
+    User me={500,500,0};
+
+    // 3. Deposit amount
+    // Clean, modular execution
+    execute_mint(&me, &pool, 50);
+
+    // Check state
+    printf("Wallet A: %.2f | Wallet B: %.2f | Shares: %.2f\n",
+            me.wallet_A, me.wallet_B, me.lp_shares);
+    //Total shares get
+    /*me.lp_shares = pool.total_LP_shares;
+
+    printf("User now has %.2f LP shares and %.2f A in wallet.\n", me.lp_shares, me.wallet_A);
+
+    burn(&pool,100);
+
+    printf("User now has %.2f LP shares and %.2f A in wallet.\n", me.lp_shares, me.wallet_A);
+
+    /*int i;
     double result = calculate_k(pool);
     printf("The pool is open: %.2lf\n",result);
-    /*for (i=0;i<10;i++) {
+    for (i=0;i<10;i++) {
         swap(&pool,10,TOKEN_A);
     }
     printf("After 10 SWAPS - \n");
     printf("POOL - New A: %.2lf| New B: %.2lf | New k: %.2lf\n",pool.token_reserves_A,pool.token_reserves_B,calculate_k(pool));
-    */
+
     swap(&pool, 50, TOKEN_A);
     swap(&pool, 50, TOKEN_B);
+
 
     // --- IMPERMANENT LOSS CALCULATION ---
 
@@ -92,7 +219,7 @@ void main(void) {
     printf("\n--- Final Analysis ---\n");
     printf("Value if you just HODL'd: %.2lf\n", value_Hodl);
     printf("Value of Pool Holdings:   %.2lf\n", value_Pool);
-    printf("Net Profit/Loss vs HODL:  %.2lf%%\n", il_percentage);
+    printf("Net Profit/Loss vs HODL:  %.2lf%%\n", il_percentage);*/
 
 
 }
