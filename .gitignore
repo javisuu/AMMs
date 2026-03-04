@@ -1,0 +1,15 @@
+IDE metadata
+.idea/
+*.iml
+cmake-build-debug/
+cmake-build-release/
+out/
+
+Compiled files
+*.exe
+*.o
+*.out
+amm_sim
+
+System files
+.DS_Store
