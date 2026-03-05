@@ -26,7 +26,7 @@ double calculate_k(LiquidityPool pool) {
 }
 //
 
-void swap(LiquidityPool *pool, double amount_in, TokenType input_type) {
+double swap(LiquidityPool *pool, double amount_in, TokenType input_type) {
 
     double *res_in; //What I introduce to the pool
     double *res_out; //What I extract from the pool
@@ -64,6 +64,7 @@ void swap(LiquidityPool *pool, double amount_in, TokenType input_type) {
     printf("Swapped %.2f %s for %.2f %s\n",
             amount_in, (input_type == TOKEN_A ? "A" : "B"),
             amount_out, (input_type == TOKEN_A ? "B" : "A"));
+    return amount_out;
 }
 
 //Ads liquity
@@ -115,6 +116,8 @@ Withdrawal burn(LiquidityPool *pool, double shares_to_burn) {
 
 }
 
+// Wrap functions to update user's wallet
+
 void execute_mint(User *user, LiquidityPool *pool, double amount_A) {
     double required_B;
     // 1. Calculate required B based on pool ratio
@@ -161,6 +164,37 @@ void execute_burn(User *user, LiquidityPool *pool, double shares) {
     user->lp_shares -= shares;
 
     printf("SUCCESS: Received %.2f A and %.2f B\n", received.amount_A, received.amount_B);
+}
+
+void excute_swap(User *user, LiquidityPool *pool,double amount_in,TokenType input_type ) {
+    double *spend_wallet;
+    double *receive_wallet;
+    // 1. Identify the wallet the user is spending for
+    if (input_type == TOKEN_A) {
+        spend_wallet=&user->wallet_A;
+        receive_wallet=&user->wallet_B;
+    }else {
+        spend_wallet=&user->wallet_B;
+        receive_wallet=&user->wallet_A;
+
+    }
+    // 2. Verify the viability of the transaction
+    if (amount_in>*spend_wallet) {
+        printf("FAILED: User has insufficient %s balance!\n",
+                (input_type == TOKEN_A ? "A" : "B"));
+        return;
+    }
+    //3. Deduct from the wallet
+    *spend_wallet-=amount_in;
+
+    //4. Execute the swap
+    double amount_received=swap(pool, amount_in, input_type);
+
+    //5. User out
+    *receive_wallet+=amount_received;
+
+    printf("SUCCESS: User wallet updated (+%.2f tokens).\n", amount_received);
+
 }
 
 void main(void) {
